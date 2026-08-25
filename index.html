@@ -948,7 +948,7 @@
     }
   })();
 
-  // ---- CAMPO DE FLUJO DEL HERO: líneas curvas que fluyen en orden, sin puntos ni nodos ----
+  // ---- CARRILES DE DATOS DEL HERO: rutas curvas fijas (tipo pipeline) con pulsos que viajan en orden ----
   (function(){
     const canvas = document.getElementById('heroDots');
     const hero = document.querySelector('.hero');
@@ -958,33 +958,40 @@
 
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
     let w = 0, h = 0;
-    let strands = [];
+    let lanes = [];
     let mouse = { x: -9999, y: -9999 };
-    const VORTEX_R = 220;
-    const SPEED = 0.9;
+    const GLOW_R = 200;
 
-    // dirección suave del flujo en (x,y,t): dos ondas lentas superpuestas, más
-    // un remolino que se activa cerca del cursor — así las líneas se curvan
-    // "en orden" en vez de moverse al azar
-    function flowDir(x, y, t){
-      const a = Math.sin(x * 0.0022 + t * 0.00018) * 1.6 + Math.cos(y * 0.0028 - t * 0.00013) * 1.6;
-      let dx = Math.cos(a), dy = Math.sin(a);
-      if (mouse.x > -9000){
-        const mdx = x - mouse.x, mdy = y - mouse.y;
-        const d = Math.sqrt(mdx * mdx + mdy * mdy);
-        if (d < VORTEX_R && d > 0.5){
-          const strength = (1 - d / VORTEX_R) * 1.9;
-          dx += (-mdy / d) * strength;
-          dy += (mdx / d) * strength;
-        }
-      }
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      return { dx: dx / len, dy: dy / len };
+    function bezierPoint(p0, p1, p2, p3, t){
+      const mt = 1 - t;
+      return {
+        x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+        y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y,
+      };
     }
 
-    function makeStrand(){
-      const x = Math.random() * w, y = Math.random() * h;
-      return { x, y, px: x, py: y, age: 0, maxAge: 260 + Math.random() * 260 };
+    // rutas fijas: carriles horizontales con una sola curva en "S" cada uno —
+    // como líneas de un diagrama de integración, no un trazo que deambula
+    function makeLanes(){
+      const count = Math.max(6, Math.min(12, Math.round(h / 66)));
+      const margin = 60;
+      const arr = [];
+      for (let i = 0; i < count; i++){
+        const y0 = margin + (h - margin * 2) * ((i + 0.5) / count) + (Math.random() - 0.5) * 20;
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        const amp = 26 + Math.random() * 46;
+        const p0 = { x: -60, y: y0 };
+        const p1 = { x: w * 0.32, y: y0 + amp * dir };
+        const p2 = { x: w * 0.68, y: y0 - amp * dir };
+        const p3 = { x: w + 60, y: y0 };
+        const pulses = [];
+        const pulseCount = 1 + (Math.random() < 0.4 ? 1 : 0);
+        for (let p = 0; p < pulseCount; p++){
+          pulses.push({ t: Math.random(), speed: 0.00028 + Math.random() * 0.00034 });
+        }
+        arr.push({ p0, p1, p2, p3, pulses });
+      }
+      return arr;
     }
 
     function resize(){
@@ -993,73 +1000,68 @@
       canvas.width = w * dpr; canvas.height = h * dpr;
       canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-
-      const count = Math.round(Math.min(90, Math.max(42, (w * h) / 9500)));
-      strands = [];
-      for (let i = 0; i < count; i++) strands.push(makeStrand());
+      lanes = makeLanes();
     }
 
-    function step(t){
-      ctx.fillStyle = 'rgba(11,12,14,0.055)';
-      ctx.fillRect(0, 0, w, h);
+    function strokeLane(l, alpha){
+      ctx.beginPath();
+      ctx.moveTo(l.p0.x, l.p0.y);
+      ctx.bezierCurveTo(l.p1.x, l.p1.y, l.p2.x, l.p2.y, l.p3.x, l.p3.y);
+      ctx.strokeStyle = `rgba(150,165,200,${alpha})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
 
-      for (let i = 0; i < strands.length; i++){
-        const s = strands[i];
-        const dir = flowDir(s.x, s.y, t);
-        s.px = s.x; s.py = s.y;
-        s.x += dir.dx * SPEED;
-        s.y += dir.dy * SPEED;
-        s.age++;
-
-        const lifeRatio = s.age / s.maxAge;
-        const fadeIn = Math.min(1, lifeRatio * 6);
-        const fadeOut = Math.min(1, (1 - lifeRatio) * 3);
-        const alpha = Math.max(0, Math.min(0.75, fadeIn * fadeOut));
-
+    function drawPulse(l, tParam){
+      const TAIL = 0.05;
+      const steps = 14;
+      for (let s = 0; s <= steps; s++){
+        const t = tParam - TAIL * (s / steps);
+        if (t < 0 || t > 1) continue;
+        const pt = bezierPoint(l.p0, l.p1, l.p2, l.p3, t);
+        const pt2 = bezierPoint(l.p0, l.p1, l.p2, l.p3, Math.min(1, t + 0.006));
+        let alpha = (1 - s / steps) * 0.9;
+        const dx = pt.x - mouse.x, dy = pt.y - mouse.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < GLOW_R) alpha = Math.min(1, alpha + (1 - dist / GLOW_R) * 0.5);
         ctx.beginPath();
-        ctx.moveTo(s.px, s.py);
-        ctx.lineTo(s.x, s.y);
-        ctx.strokeStyle = `rgba(140,165,255,${alpha.toFixed(3)})`;
-        ctx.lineWidth = 1.1;
+        ctx.moveTo(pt.x, pt.y);
+        ctx.lineTo(pt2.x, pt2.y);
+        ctx.strokeStyle = `rgba(150,180,255,${alpha.toFixed(3)})`;
+        ctx.lineWidth = 1.6;
         ctx.stroke();
+      }
+    }
 
-        if (s.age > s.maxAge || s.x < -20 || s.x > w + 20 || s.y < -20 || s.y > h + 20){
-          const fresh = makeStrand();
-          strands[i] = fresh;
+    function draw(){
+      ctx.clearRect(0, 0, w, h);
+      for (let i = 0; i < lanes.length; i++){
+        strokeLane(lanes[i], 0.12);
+        for (let p = 0; p < lanes[i].pulses.length; p++) drawPulse(lanes[i], lanes[i].pulses[p].t);
+      }
+    }
+
+    function step(){
+      for (let i = 0; i < lanes.length; i++){
+        for (let p = 0; p < lanes[i].pulses.length; p++){
+          const pulse = lanes[i].pulses[p];
+          pulse.t += pulse.speed;
+          if (pulse.t > 1) pulse.t = 0;
         }
       }
     }
 
-    function loop(t){
-      step(t);
+    function loop(){
+      step();
+      draw();
       requestAnimationFrame(loop);
-    }
-
-    function drawStatic(){
-      ctx.clearRect(0, 0, w, h);
-      const seeds = Math.round(Math.min(46, Math.max(20, (w * h) / 19000)));
-      for (let i = 0; i < seeds; i++){
-        let x = Math.random() * w, y = Math.random() * h;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        for (let step = 0; step < 90; step++){
-          const dir = flowDir(x, y, 0);
-          x += dir.dx * 3.2; y += dir.dy * 3.2;
-          ctx.lineTo(x, y);
-          if (x < 0 || x > w || y < 0 || y > h) break;
-        }
-        ctx.strokeStyle = 'rgba(140,165,255,0.14)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
     }
 
     resize();
     window.addEventListener('resize', resize);
 
     if (reduceMotion) {
-      drawStatic();
+      draw();
     } else {
       hero.addEventListener('mousemove', (e) => {
         const rect = hero.getBoundingClientRect();
