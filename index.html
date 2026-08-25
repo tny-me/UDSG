@@ -948,7 +948,7 @@
     }
   })();
 
-  // ---- CARRILES DE DATOS DEL HERO: rutas curvas fijas (tipo pipeline) con pulsos que viajan en orden ----
+  // ---- HAZ DE LÍNEAS DEL HERO: muchas fuentes que convergen y se abren hacia varios destinos ----
   (function(){
     const canvas = document.getElementById('heroDots');
     const hero = document.querySelector('.hero');
@@ -958,9 +958,11 @@
 
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
     let w = 0, h = 0;
-    let lanes = [];
+    let strands = [];
     let mouse = { x: -9999, y: -9999 };
-    const GLOW_R = 200;
+    const GLOW_R = 190;
+
+    function lerp(a, b, t){ return a + (b - a) * t; }
 
     function bezierPoint(p0, p1, p2, p3, t){
       const mt = 1 - t;
@@ -970,26 +972,31 @@
       };
     }
 
-    // rutas fijas: carriles horizontales con una sola curva en "S" cada uno —
-    // como líneas de un diagrama de integración, no un trazo que deambula
-    function makeLanes(){
-      const count = Math.max(6, Math.min(12, Math.round(h / 66)));
-      const margin = 60;
+    // muchos orígenes dispersos a la izquierda, todos pasan cerca de un mismo
+    // punto de convergencia y luego se abren hacia varios destinos a la derecha
+    // — muchas fuentes de datos integrándose en una sola arquitectura
+    function makeStrands(){
+      const rows = 5;
+      const perRow = Math.max(5, Math.min(9, Math.round(w / 190)));
+      const marginY = h * 0.12;
+      const pinch = { x: w * 0.46, y: h * 0.52 };
       const arr = [];
-      for (let i = 0; i < count; i++){
-        const y0 = margin + (h - margin * 2) * ((i + 0.5) / count) + (Math.random() - 0.5) * 20;
-        const dir = Math.random() < 0.5 ? -1 : 1;
-        const amp = 26 + Math.random() * 46;
-        const p0 = { x: -60, y: y0 };
-        const p1 = { x: w * 0.32, y: y0 + amp * dir };
-        const p2 = { x: w * 0.68, y: y0 - amp * dir };
-        const p3 = { x: w + 60, y: y0 };
-        const pulses = [];
-        const pulseCount = 1 + (Math.random() < 0.4 ? 1 : 0);
-        for (let p = 0; p < pulseCount; p++){
-          pulses.push({ t: Math.random(), speed: 0.00028 + Math.random() * 0.00034 });
+      for (let r = 0; r < rows; r++){
+        const rowY = marginY + (h - marginY * 2) * (r / (rows - 1));
+        const bright = r === 1; // una fila destaca, como en la referencia
+        for (let i = 0; i < perRow; i++){
+          const p0 = { x: -40 - Math.random() * 60, y: (Math.random() - 0.15) * h * 1.15 };
+          const p3 = { x: w + 60, y: rowY + (Math.random() - 0.5) * 22 };
+          const pull = 0.5 + Math.random() * 0.16;
+          const jitter = () => (Math.random() - 0.5) * 30;
+          const p1 = { x: lerp(p0.x, pinch.x, pull) + jitter(), y: lerp(p0.y, pinch.y, pull) + jitter() };
+          const p2 = { x: lerp(p3.x, pinch.x, pull) + jitter(), y: lerp(p3.y, pinch.y, pull) + jitter() };
+          arr.push({
+            p0, p1, p2, p3,
+            alpha: bright ? 0.2 + Math.random() * 0.16 : 0.03 + Math.random() * 0.06,
+            seed: Math.random() * Math.PI * 2,
+          });
         }
-        arr.push({ p0, p1, p2, p3, pulses });
       }
       return arr;
     }
@@ -1000,60 +1007,34 @@
       canvas.width = w * dpr; canvas.height = h * dpr;
       canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      lanes = makeLanes();
+      strands = makeStrands();
     }
 
-    function strokeLane(l, alpha){
-      ctx.beginPath();
-      ctx.moveTo(l.p0.x, l.p0.y);
-      ctx.bezierCurveTo(l.p1.x, l.p1.y, l.p2.x, l.p2.y, l.p3.x, l.p3.y);
-      ctx.strokeStyle = `rgba(150,165,200,${alpha})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
+    function draw(t){
+      ctx.clearRect(0, 0, w, h);
+      const drift = reduceMotion ? 0 : Math.sin(t * 0.00012) * 10;
+      for (let i = 0; i < strands.length; i++){
+        const s = strands[i];
+        const wobble = reduceMotion ? 0 : Math.sin(t * 0.00022 + s.seed) * 6;
+        const p1 = { x: s.p1.x + drift, y: s.p1.y + wobble };
+        const p2 = { x: s.p2.x + drift, y: s.p2.y - wobble };
 
-    function drawPulse(l, tParam){
-      const TAIL = 0.05;
-      const steps = 14;
-      for (let s = 0; s <= steps; s++){
-        const t = tParam - TAIL * (s / steps);
-        if (t < 0 || t > 1) continue;
-        const pt = bezierPoint(l.p0, l.p1, l.p2, l.p3, t);
-        const pt2 = bezierPoint(l.p0, l.p1, l.p2, l.p3, Math.min(1, t + 0.006));
-        let alpha = (1 - s / steps) * 0.9;
-        const dx = pt.x - mouse.x, dy = pt.y - mouse.y;
+        const mid = bezierPoint(s.p0, p1, p2, s.p3, 0.6);
+        const dx = mid.x - mouse.x, dy = mid.y - mouse.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < GLOW_R) alpha = Math.min(1, alpha + (1 - dist / GLOW_R) * 0.5);
+        const boost = dist < GLOW_R ? (1 - dist / GLOW_R) * 0.45 : 0;
+
         ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.lineTo(pt2.x, pt2.y);
-        ctx.strokeStyle = `rgba(150,180,255,${alpha.toFixed(3)})`;
-        ctx.lineWidth = 1.6;
+        ctx.moveTo(s.p0.x, s.p0.y);
+        ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, s.p3.x, s.p3.y);
+        ctx.strokeStyle = `rgba(235,238,245,${Math.min(1, s.alpha + boost).toFixed(3)})`;
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
     }
 
-    function draw(){
-      ctx.clearRect(0, 0, w, h);
-      for (let i = 0; i < lanes.length; i++){
-        strokeLane(lanes[i], 0.12);
-        for (let p = 0; p < lanes[i].pulses.length; p++) drawPulse(lanes[i], lanes[i].pulses[p].t);
-      }
-    }
-
-    function step(){
-      for (let i = 0; i < lanes.length; i++){
-        for (let p = 0; p < lanes[i].pulses.length; p++){
-          const pulse = lanes[i].pulses[p];
-          pulse.t += pulse.speed;
-          if (pulse.t > 1) pulse.t = 0;
-        }
-      }
-    }
-
-    function loop(){
-      step();
-      draw();
+    function loop(t){
+      draw(t);
       requestAnimationFrame(loop);
     }
 
@@ -1061,7 +1042,7 @@
     window.addEventListener('resize', resize);
 
     if (reduceMotion) {
-      draw();
+      draw(0);
     } else {
       hero.addEventListener('mousemove', (e) => {
         const rect = hero.getBoundingClientRect();
